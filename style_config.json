@@ -1,0 +1,32 @@
+{
+    "page_title": "🎫 Ticket Data Storytelling",
+    "page_icon": "🎫",
+    "layout": "wide",
+    "primary_color": "#6C63FF",
+    "background_color": "#0E1117",
+    "secondary_background_color": "#1A1F2E",
+    "text_color": "#FAFAFA",
+    "font": "Inter",
+    "chart_color_palette": [
+        "#6C63FF",
+        "#FF6584",
+        "#43E97B",
+        "#F8D800",
+        "#38F9D7",
+        "#FA709A",
+        "#FEE140",
+        "#A18CD1"
+    ],
+    "chart_template": "plotly_dark",
+    "card_border_radius": "12px",
+    "card_background": "rgba(255, 255, 255, 0.05)",
+    "card_border_color": "rgba(108, 99, 255, 0.3)",
+    "accent_gradient": "linear-gradient(135deg, #6C63FF 0%, #FF6584 100%)",
+    "phase_colors": {
+        "Initial Issue": "#6C63FF",
+        "Follow-ups": "#38F9D7",
+        "Developments": "#43E97B",
+        "Later Incidents": "#F8D800",
+        "Recent Events": "#FF6584"
+    }
+}
