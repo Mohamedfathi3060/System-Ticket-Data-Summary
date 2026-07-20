@@ -239,6 +239,7 @@ def _call_gemini_api(system_prompt: str, user_prompt: str) -> str:
         generation_config=genai.types.GenerationConfig(
             temperature=GEMINI_TEMPERATURE,
             max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+            response_mime_type="application/json",
         ),
     )
     
