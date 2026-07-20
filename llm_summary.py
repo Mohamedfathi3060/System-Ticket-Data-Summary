@@ -116,7 +116,7 @@ CRITICAL INSTRUCTIONS:
 2. Translate any non-English ticket descriptions, notes, and statuses into English in your narrative.
 3. You will be provided with a chronologically sorted list of tickets. YOU MUST group these tickets into exactly 5 storytelling phases: "Initial Issue", "Follow-ups", "Developments", "Later Incidents", and "Recent Events".
 4. Produce a structured JSON response with exactly 5 sections (one for each phase in order).
-5. Each section must have: "phase" (the phase name), "timeframe" (date range string), "ticket_numbers" (list of order numbers), and "narrative" (a coherent paragraph).
+5. Each section must have: "phase" (the phase name), "timeframe" (date range string), "ticket_numbers" (a list of EXACT `ORDER_NUMBER` identifiers from the provided dataset. DO NOT invent arbitrary sequential tags like "Ticket 1" or "T-01"), and "narrative" (a coherent paragraph).
 6. The narrative should tell a STORY — connect events, describe the customer's experience, explain what actions were taken and their outcomes.
 7. If you genuinely believe a phase has no tickets that fit its description, still include it with an empty ticket list and a brief note like "No activity recorded during this period."
 8. Be concise but informative. Each narrative should be 2-4 sentences.
