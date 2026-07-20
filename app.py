@@ -209,7 +209,7 @@ def render_phase_card(
 # =============================================================================
 # Header
 # =============================================================================
-st.markdown('<div class="main-header">🎫 Ticket Data Storytelling</div>', unsafe_allow_html=True)
+st.markdown('<div class="main-header">Ticket Data Storytelling</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="sub-header">AI-powered storytelling summaries from ticket data</div>',
     unsafe_allow_html=True,
@@ -220,16 +220,27 @@ st.markdown(
 # =============================================================================
 with st.sidebar:
     st.markdown("### 📁 Data Upload")
-    uploaded_file = st.file_uploader(
+    uploaded_files = st.file_uploader(
         "Upload ticket data (.txt)",
         type=["txt", "csv"],
-        help="Upload the raw ticket data text file (CSV format).",
+        accept_multiple_files=True,
+        help="Upload the raw ticket data text file(s) (CSV format).",
     )
 
-    if uploaded_file is not None:
+    if uploaded_files:
         try:
-            with st.spinner("Parsing file..."):
-                df_raw = parse_ticket_file(uploaded_file)
+            with st.spinner("Parsing file(s)..."):
+                dfs = []
+                for file in uploaded_files:
+                    try:
+                        dfs.append(parse_ticket_file(file))
+                    except Exception as e:
+                        st.error(f"❌ Failed to parse {file.name}: {str(e)}")
+                
+                if not dfs:
+                    raise ValueError("No valid file could be parsed.")
+                
+                df_raw = pd.concat(dfs, ignore_index=True)
                 st.session_state.df_raw = df_raw
 
             with st.spinner("Cleaning data..."):
@@ -254,14 +265,6 @@ with st.sidebar:
             filtered_out = len(df_raw) - len(df_clean)
             if filtered_out > 0:
                 st.info(f"ℹ️ {filtered_out} row(s) filtered out (categories not in {VALID_CATEGORIES})")
-
-            # HDW note
-            hdw_count = len(df_clean[df_clean["SERVICE_CATEGORY"] == "HDW"])
-            if hdw_count > 0:
-                st.warning(
-                    f"⚠️ {hdw_count} HDW ticket(s) mapped as 'Unmapped/Hardware' — "
-                    f"present in filter list but has no formal product mapping."
-                )
 
             # Download buttons
             st.markdown("---")
@@ -354,61 +357,70 @@ if st.session_state.df_clean is not None:
             )
 
             # Generate summaries button
-            if st.button("🤖 Generate AI Summaries", type="primary", use_container_width=True):
-                cache_key = selected_customer
+            is_generating = st.session_state.get("generating_summaries", False)
+            
+            if st.button("🤖 Generate AI Summaries", type="primary", use_container_width=True, disabled=is_generating):
+                st.session_state.generating_summaries = True
+                st.rerun()
+                
+            if st.session_state.get("generating_summaries", False):
+                try:
+                    cache_key = selected_customer
 
-                for product in products:
-                    product_tickets = customer_tickets[
-                        customer_tickets["PRODUCT"] == product
-                    ]
-                    emoji = get_category_emoji(product)
+                    for product in products:
+                        product_tickets = customer_tickets[
+                            customer_tickets["PRODUCT"] == product
+                        ]
+                        emoji = get_category_emoji(product)
 
-                    with st.expander(
-                        f"{emoji} {product} ({len(product_tickets)} tickets)",
-                        expanded=True,
-                    ):
-                        summary_cache_key = f"{selected_customer}_{product}"
+                        with st.expander(
+                            f"{emoji} {product} ({len(product_tickets)} tickets)",
+                            expanded=True,
+                        ):
+                            summary_cache_key = f"{selected_customer}_{product}"
 
-                        if summary_cache_key in st.session_state.summaries_cache:
-                            summary = st.session_state.summaries_cache[summary_cache_key]
-                        else:
-                            with st.spinner(
-                                f"Generating {product} summary with Gemini AI..."
-                            ):
-                                try:
-                                    summary = generate_summary(
-                                        selected_customer, product, product_tickets
+                            if summary_cache_key in st.session_state.summaries_cache:
+                                summary = st.session_state.summaries_cache[summary_cache_key]
+                            else:
+                                with st.spinner(
+                                    f"Generating {product} summary with Gemini AI..."
+                                ):
+                                    try:
+                                        summary = generate_summary(
+                                            selected_customer, product, product_tickets
+                                        )
+                                        st.session_state.summaries_cache[summary_cache_key] = summary
+                                    except ValueError as e:
+                                        st.error(f"⚙️ Configuration Error: {str(e)}")
+                                        summary = None
+                                    except RuntimeError as e:
+                                        st.error(f"🤖 LLM Error: {str(e)}")
+                                        summary = None
+                                    except Exception as e:
+                                        st.error(f"❌ Unexpected error: {str(e)}")
+                                        summary = None
+
+                            # Render the summary phases
+                            if summary and "summary" in summary:
+                                phase_colors = style.get("phase_colors", {})
+                                for phase_data in summary["summary"]:
+                                    phase_name = phase_data.get("phase", "Unknown")
+                                    color = phase_colors.get(phase_name, style["primary_color"])
+                                    st.markdown(
+                                        render_phase_card(
+                                            phase_name=phase_name,
+                                            timeframe=phase_data.get("timeframe", "N/A"),
+                                            ticket_numbers=phase_data.get("ticket_numbers", []),
+                                            narrative=phase_data.get("narrative", "No data available."),
+                                            color=color,
+                                        ),
+                                        unsafe_allow_html=True,
                                     )
-                                    st.session_state.summaries_cache[summary_cache_key] = summary
-                                except ValueError as e:
-                                    st.error(f"⚙️ Configuration Error: {str(e)}")
-                                    summary = None
-                                except RuntimeError as e:
-                                    st.error(f"🤖 LLM Error: {str(e)}")
-                                    summary = None
-                                except Exception as e:
-                                    st.error(f"❌ Unexpected error: {str(e)}")
-                                    summary = None
-
-                        # Render the summary phases
-                        if summary and "summary" in summary:
-                            phase_colors = style.get("phase_colors", {})
-                            for phase_data in summary["summary"]:
-                                phase_name = phase_data.get("phase", "Unknown")
-                                color = phase_colors.get(phase_name, style["primary_color"])
-                                st.markdown(
-                                    render_phase_card(
-                                        phase_name=phase_name,
-                                        timeframe=phase_data.get("timeframe", "N/A"),
-                                        ticket_numbers=phase_data.get("ticket_numbers", []),
-                                        narrative=phase_data.get("narrative", "No data available."),
-                                        color=color,
-                                    ),
-                                    unsafe_allow_html=True,
-                                )
-                        elif summary is not None:
-                            st.warning("⚠️ Summary format was unexpected. Raw response:")
-                            st.json(summary)
+                            elif summary is not None:
+                                st.warning("⚠️ Summary format was unexpected. Raw response:")
+                                st.json(summary)
+                finally:
+                    st.session_state.generating_summaries = False
 
             # Show raw data expander
             with st.expander("📋 View Raw Ticket Data", expanded=False):

@@ -30,7 +30,7 @@ CATEGORY_TO_PRODUCT = {
     "KAD": "TV",
     "GIGA": "GIGA",
     "VOD": "VOD",
-    "HDW": "Unmapped/Hardware",
+    "HDW": "Broadband",
 }
 
 # =============================================================================
@@ -99,11 +99,15 @@ SUMMARY_PHASES = [
 ]
 
 # =============================================================================
-# Gemini LLM Configuration
+# Gemini LLM Configuration & Token Protections
 # =============================================================================
 GEMINI_MODEL = "gemini-3.5-flash"
 GEMINI_TEMPERATURE = 0.4
 GEMINI_MAX_OUTPUT_TOKENS = 4096
+
+# Safeguards against massive token consumption via massive customer ticket counts or huge text dumps
+MAX_TICKETS_PER_SUMMARY = 20 
+MAX_FIELD_LENGTH = 500
 
 # =============================================================================
 # Style Configuration Loader

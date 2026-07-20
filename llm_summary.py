@@ -13,6 +13,7 @@ import os
 import re
 from typing import Dict, List, Optional
 
+import streamlit as st
 import google.generativeai as genai
 import pandas as pd
 from dotenv import load_dotenv
@@ -23,6 +24,8 @@ from config import (
     GEMINI_TEMPERATURE,
     NARRATIVE_FIELDS,
     SUMMARY_PHASES,
+    MAX_TICKETS_PER_SUMMARY,
+    MAX_FIELD_LENGTH,
 )
 
 # Load environment variables from .env file
@@ -36,7 +39,7 @@ def _configure_gemini() -> None:
     Raises:
         ValueError: If GEMINI_API_KEY is not set.
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY")
     if not api_key:
         raise ValueError(
             "GEMINI_API_KEY environment variable is not set. "
@@ -60,7 +63,11 @@ def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
     """
     contexts = []
 
-    for _, row in tickets_df.iterrows():
+    # Sort to ensure we take ONLY the most recent N tickets to heavily protect against token waste/abuse
+    # if a user uploads a wildly huge fake volume of tickets for one customer.
+    recent_tickets = tickets_df.tail(MAX_TICKETS_PER_SUMMARY)
+
+    for _, row in recent_tickets.iterrows():
         context = {}
         for field in NARRATIVE_FIELDS:
             if field in row.index:
@@ -69,7 +76,11 @@ def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
                 if isinstance(value, pd.Timestamp):
                     context[field] = value.strftime("%Y-%m-%d %H:%M")
                 elif pd.notna(value) and str(value).strip():
-                    context[field] = str(value).strip()
+                    text_val = str(value).strip()
+                    # Hard truncate any absurdly long text fields to save tokens
+                    if len(text_val) > MAX_FIELD_LENGTH:
+                        text_val = text_val[:MAX_FIELD_LENGTH] + "... [truncated]"
+                    context[field] = text_val
                 # Skip NaN/empty values to keep prompt minimal
         contexts.append(context)
 

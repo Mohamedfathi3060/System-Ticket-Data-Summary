@@ -32,7 +32,7 @@ def parse_ticket_file(uploaded_file) -> pd.DataFrame:
             content = content.decode("utf-8")
 
         # Parse CSV from string content
-        df = pd.read_csv(io.StringIO(content), dtype=str)
+        df = pd.read_csv(io.StringIO(content), dtype=str, sep=None, engine='python', on_bad_lines='skip')
 
         # Strip whitespace from column names
         df.columns = df.columns.str.strip()
