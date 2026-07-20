@@ -76,49 +76,6 @@ def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
     return contexts
 
 
-def split_into_phases(tickets: List[Dict]) -> Dict[str, List[Dict]]:
-    """
-    Split chronologically sorted tickets into 5 phases for storytelling.
-
-    Strategy:
-        - If ≤5 tickets: assign one ticket per phase (some phases may be empty).
-        - If >5 tickets: use natural time gaps to find clusters. If clustering
-          doesn't produce 5 groups, fall back to even quintile splitting.
-
-    The 5 phases are: Initial Issue, Follow-ups, Developments,
-    Later Incidents, Recent Events.
-
-    Args:
-        tickets: List of ticket context dicts, already sorted by ACCEPTANCE_TIME.
-
-    Returns:
-        Dict[str, List[Dict]]: Mapping from phase name to list of tickets.
-    """
-    phase_names = [p["name"] for p in SUMMARY_PHASES]
-    n = len(tickets)
-
-    if n == 0:
-        return {name: [] for name in phase_names}
-
-    if n <= 5:
-        # Assign tickets one-by-one to phases; extras go to the last phase
-        result = {name: [] for name in phase_names}
-        for i, ticket in enumerate(tickets):
-            phase_idx = min(i, 4)  # Cap at last phase
-            result[phase_names[phase_idx]].append(ticket)
-        return result
-
-    # For >5 tickets: even quintile splitting
-    # Calculate split points for 5 roughly equal groups
-    chunk_size = n / 5.0
-    result = {name: [] for name in phase_names}
-
-    for i, ticket in enumerate(tickets):
-        phase_idx = min(int(i / chunk_size), 4)
-        result[phase_names[phase_idx]].append(ticket)
-
-    return result
-
 
 def _build_system_prompt() -> str:
     """
@@ -132,18 +89,19 @@ def _build_system_prompt() -> str:
 CRITICAL INSTRUCTIONS:
 1. The ticket data may contain text in MULTIPLE LANGUAGES (English, German, or others). You MUST understand ALL languages present and produce your summary ENTIRELY IN ENGLISH regardless of the input language.
 2. Translate any non-English ticket descriptions, notes, and statuses into English in your narrative.
-3. Produce a structured JSON response with exactly 5 sections.
-4. Each section must have: "timeframe" (date range string), "ticket_numbers" (list of order numbers), and "narrative" (a coherent paragraph).
-5. The narrative should tell a STORY — connect events, describe the customer's experience, explain what actions were taken and their outcomes.
-6. If a phase has no tickets, still include it with an empty ticket list and a brief note like "No activity recorded during this period."
-7. Be concise but informative. Each narrative should be 2-4 sentences.
-8. Return ONLY valid JSON, no markdown formatting or extra text."""
+3. You will be provided with a chronologically sorted list of tickets. YOU MUST group these tickets into exactly 5 storytelling phases: "Initial Issue", "Follow-ups", "Developments", "Later Incidents", and "Recent Events".
+4. Produce a structured JSON response with exactly 5 sections (one for each phase in order).
+5. Each section must have: "phase" (the phase name), "timeframe" (date range string), "ticket_numbers" (list of order numbers), and "narrative" (a coherent paragraph).
+6. The narrative should tell a STORY — connect events, describe the customer's experience, explain what actions were taken and their outcomes.
+7. If you genuinely believe a phase has no tickets that fit its description, still include it with an empty ticket list and a brief note like "No activity recorded during this period."
+8. Be concise but informative. Each narrative should be 2-4 sentences.
+9. Return ONLY valid JSON, no markdown formatting or extra text."""
 
 
 def _build_user_prompt(
     customer_number: str,
     product: str,
-    phases: Dict[str, List[Dict]],
+    tickets: List[Dict],
 ) -> str:
     """
     Build the user prompt with ticket data and one-shot example.
@@ -151,17 +109,17 @@ def _build_user_prompt(
     The prompt includes:
     - Customer and product context
     - A one-shot example showing the expected JSON format
-    - The actual ticket data organized by phase
+    - The actual ticket data organized as a chronological list
 
     Args:
         customer_number: The customer identifier.
         product: The product category name.
-        phases: Dictionary of phase_name → list of ticket contexts.
+        tickets: List of ticket context dictionaries.
 
     Returns:
         str: Complete user prompt string.
     """
-    # One-shot example for the LLM to follow
+    # One-shot example for the LLM to follow, featuring a non-empty, solid narrative for all phases
     one_shot_example = json.dumps(
         {
             "customer_number": "EXAMPLE-001",
@@ -170,49 +128,47 @@ def _build_user_prompt(
                 {
                     "phase": "Initial Issue",
                     "timeframe": "2024-11-05 to 2024-11-06",
-                    "ticket_numbers": ["001-0671177/24", "001-0670952/24"],
-                    "narrative": "The customer first reported broadband connectivity issues on November 5th, experiencing slow WLAN speeds. A support ticket was raised and WLAN settings were optimized. The following day, a complete internet outage was reported, requiring a router restart to restore service.",
+                    "ticket_numbers": ["001-0671177/24"],
+                    "narrative": "The customer first reported broadband connectivity issues on November 5th, experiencing slow WLAN speeds. A support ticket was raised and initial tests confirmed a synchronization drop at the local exchange."
                 },
                 {
                     "phase": "Follow-ups",
-                    "timeframe": "2024-11-07",
+                    "timeframe": "2024-11-07 to 2024-11-08",
                     "ticket_numbers": ["001-0671178/24"],
-                    "narrative": "A follow-up interaction occurred when the customer reported the WLAN connection dropping again. The support team performed a router reset which temporarily restored connectivity.",
+                    "narrative": "A follow-up interaction occurred when the customer reported a complete absence of signal. The support team attempted a remote reset and re-provisioned the router, but the issue persisted."
                 },
                 {
                     "phase": "Developments",
-                    "timeframe": "No activity",
-                    "ticket_numbers": [],
-                    "narrative": "No further developments were recorded during this period.",
+                    "timeframe": "2024-11-10",
+                    "ticket_numbers": ["001-0672001/24"],
+                    "narrative": "The situation progressed as a field technician was dispatched to the customer's premises. The technician identified a faulty DSL line card in the street cabinet as the root cause."
                 },
                 {
                     "phase": "Later Incidents",
-                    "timeframe": "No activity",
-                    "ticket_numbers": [],
-                    "narrative": "No later incidents were reported for this product category.",
+                    "timeframe": "2024-11-12",
+                    "ticket_numbers": ["001-0672503/24", "001-0672510/24"],
+                    "narrative": "Subsequent tickets showed the customer experienced intermittent drops after the repair. The network operations team was looped in to monitor the DSLAM stability, ensuring line parameters remained within bounds."
                 },
                 {
                     "phase": "Recent Events",
-                    "timeframe": "No activity",
-                    "ticket_numbers": [],
-                    "narrative": "No recent events recorded. The last known status indicates the issues were being monitored.",
-                },
+                    "timeframe": "2024-11-15",
+                    "ticket_numbers": ["001-0673011/24"],
+                    "narrative": "Most recently, the customer confirmed stable service. A final monitoring check showed 100% uptime over a 48-hour window, resulting in successful closure of the incident."
+                }
             ],
         },
         indent=2,
     )
 
-    # Build the actual ticket data section
+    # Build the actual ticket data section as a flat list
     ticket_data_str = ""
-    for phase_name, tickets in phases.items():
-        ticket_data_str += f"\n### {phase_name}\n"
-        if not tickets:
-            ticket_data_str += "No tickets in this phase.\n"
-        else:
-            for i, t in enumerate(tickets, 1):
-                ticket_data_str += f"\nTicket {i}:\n"
-                for key, value in t.items():
-                    ticket_data_str += f"  {key}: {value}\n"
+    if not tickets:
+        ticket_data_str = "No tickets found.\n"
+    else:
+        for i, t in enumerate(tickets, 1):
+            ticket_data_str += f"\nTicket {i}:\n"
+            for key, value in t.items():
+                ticket_data_str += f"  {key}: {value}\n"
 
     prompt = f"""Generate a storytelling summary for the following customer's ticket history.
 
@@ -223,21 +179,24 @@ def _build_user_prompt(
 
 **EXAMPLE OUTPUT FORMAT (follow this structure exactly):**
 ```json
-{one_shot_example}
+{{
+{one_shot_example[2:-2]}
+}}
 ```
 
 ---
 
-**ACTUAL TICKET DATA TO SUMMARIZE:**
+**ACTUAL TICKET DATA TO SUMMARIZE (Sorted Chronologically):**
 {ticket_data_str}
 
 ---
 
 Now generate the JSON summary for customer {customer_number}'s {product} tickets. Remember:
 - Translate any non-English text to English in your narrative.
+- You must distribute the provided tickets logically across the 5 phases based on their progression and chronology.
 - Return ONLY valid JSON matching the example structure above.
 - Use the actual customer number and product in the response.
-- The "summary" array must contain exactly 5 objects (one per phase)."""
+- The "summary" array must contain exactly 5 objects."""
 
     return prompt
 
@@ -252,10 +211,9 @@ def generate_summary(
 
     Pipeline:
         1. Build minimal ticket contexts (narrative fields only).
-        2. Split into 5 chronological phases.
-        3. Construct one-shot prompt.
-        4. Call Gemini API.
-        5. Parse and return the JSON response.
+        2. Construct one-shot prompt (LLM manages phase grouping).
+        3. Call Gemini API.
+        4. Parse and return the JSON response.
 
     Args:
         customer_number: Customer identifier.
@@ -273,14 +231,11 @@ def generate_summary(
     # Step 1: Build ticket context objects
     ticket_contexts = build_ticket_context(tickets_df)
 
-    # Step 2: Split into 5 phases
-    phases = split_into_phases(ticket_contexts)
-
-    # Step 3: Build prompt
+    # Step 2: Build prompt
     system_prompt = _build_system_prompt()
-    user_prompt = _build_user_prompt(customer_number, product, phases)
+    user_prompt = _build_user_prompt(customer_number, product, ticket_contexts)
 
-    # Step 4: Call Gemini API
+    # Step 3: Call Gemini API
     try:
         model = genai.GenerativeModel(
             model_name=GEMINI_MODEL,
