@@ -35,7 +35,7 @@ load_dotenv()
 
 # Automatically sync Langchain keys from Streamlit Secrets to os.environ 
 try:
-    for _key in ["LANGCHAIN_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_PROJECT"]:
+    for _key in ["LANGCHAIN_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_PROJECT", "LANGSMITH_ENDPOINT"]:
         if _key in st.secrets:
             os.environ[_key] = str(st.secrets[_key])
 except FileNotFoundError:
