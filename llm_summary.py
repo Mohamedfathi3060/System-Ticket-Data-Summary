@@ -33,6 +33,15 @@ from config import (
 # Load environment variables from .env file
 load_dotenv()
 
+# Automatically sync Langchain keys from Streamlit Secrets to os.environ 
+try:
+    for _key in ["LANGCHAIN_API_KEY", "LANGCHAIN_TRACING_V2", "LANGCHAIN_PROJECT"]:
+        if _key in st.secrets:
+            os.environ[_key] = str(st.secrets[_key])
+except FileNotFoundError:
+    pass
+    
+
 # Set up logging for background tracking
 logger = logging.getLogger(__name__)
 
