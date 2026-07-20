@@ -29,13 +29,14 @@ def parse_ticket_file(uploaded_file) -> pd.DataFrame:
         # Read the file content and decode
         content = uploaded_file.read()
         if isinstance(content, bytes):
-            content = content.decode("utf-8")
+            # Use utf-8-sig to automatically strip the invisible Byte Order Mark (BOM)
+            content = content.decode("utf-8-sig")
 
         # Parse CSV from string content
         df = pd.read_csv(io.StringIO(content), dtype=str, sep=None, engine='python', on_bad_lines='skip')
 
-        # Strip whitespace from column names
-        df.columns = df.columns.str.strip()
+        # Strip whitespace and any residual BOMs from column names
+        df.columns = df.columns.str.strip().str.replace('\ufeff', '')
 
         return df
 

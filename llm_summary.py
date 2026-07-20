@@ -222,11 +222,36 @@ Now generate the JSON summary for customer {customer_number}'s {product} tickets
 - Return ONLY valid JSON matching the example structure above.
 - Use the actual customer number and product in the response.
 - The "summary" array must contain exactly 5 objects."""
+    prompt += "\n```"
 
     return prompt
 
 
-@traceable(name="Generate Ticket Summary")
+@traceable(name="Gemini API Request", run_type="llm")
+def _call_gemini_api(system_prompt: str, user_prompt: str) -> str:
+    """
+    Isolated wrapper around the Gemini API to explicitly log the exact 
+    system instructions and user configurations into LangSmith.
+    """
+    model = genai.GenerativeModel(
+        model_name=GEMINI_MODEL,
+        system_instruction=system_prompt,
+        generation_config=genai.types.GenerationConfig(
+            temperature=GEMINI_TEMPERATURE,
+            max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+        ),
+    )
+    
+    response = model.generate_content(user_prompt)
+    
+    try:
+        return response.text.strip()
+    except ValueError:
+        logger.error(f"Empty or blocked Gemini response. Candidates: {response.candidates}")
+        raise RuntimeError("The AI response was blocked or returned an empty payload.")
+
+
+@traceable(name="Generate Ticket Summary", run_type="chain")
 def generate_summary(
     customer_number: str,
     product: str,
@@ -238,51 +263,37 @@ def generate_summary(
     Pipeline:
         1. Build minimal ticket contexts (narrative fields only).
         2. Construct one-shot prompt (LLM manages phase grouping).
-        3. Call Gemini API.
-        4. Parse and return the JSON response.
+        3. Validate the API configuration.
+        4. Call Gemini LLM (wrapped in traceable span for input/output visibility).
+        5. Parse response safely falling back to Regex.
 
     Args:
-        customer_number: Customer identifier.
-        product: Product category name.
-        tickets_df: DataFrame of tickets for this customer+product, sorted by time.
+        customer_number: The customer identifier.
+        product: The product category name.
+        tickets_df: DataFrame containing the customer's tickets for the product.
 
     Returns:
-        Optional[Dict]: Parsed summary dictionary with 5 phases, or None on failure.
+        Optional[Dict]: A dictionary matching the required JSON format, or None on failure.
 
     Raises:
         ValueError: If Gemini API key is not configured.
     """
     _configure_gemini()
 
-    # Step 1: Build ticket context objects
-    ticket_contexts = build_ticket_context(tickets_df)
-
-    # Step 2: Build prompt
-    system_prompt = _build_system_prompt()
-    user_prompt = _build_user_prompt(customer_number, product, ticket_contexts)
-
-    # Step 3: Call Gemini API
     try:
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            system_instruction=system_prompt,
-            generation_config=genai.GenerationConfig(
-                temperature=GEMINI_TEMPERATURE,
-                max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
-                response_mime_type="application/json",
-            ),
-        )
+        # Step 1: Build robust context list
+        contexts = build_ticket_context(tickets_df)
+        if not contexts:
+            return None
 
-        response = model.generate_content(user_prompt)
+        # Step 2: Build prompts
+        system_prompt = _build_system_prompt()
+        user_prompt = _build_user_prompt(customer_number, product, contexts)
 
+        # Step 3 & 4: Call LLM explicitly via traceable runner
+        response_text = _call_gemini_api(system_prompt, user_prompt)
+        
         # Step 5: Parse the JSON response
-        try:
-            response_text = response.text.strip()
-        except ValueError as ve:
-            logger.error(f"Empty or blocked Gemini response. Candidates: {response.candidates}")
-            raise RuntimeError("The AI response was blocked or returned an empty payload.")
-            
-        # Try direct JSON parse
         try:
             result = json.loads(response_text)
         except json.JSONDecodeError:

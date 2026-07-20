@@ -106,8 +106,8 @@ GEMINI_TEMPERATURE = 0.4
 GEMINI_MAX_OUTPUT_TOKENS = 4096
 
 # Safeguards against massive token consumption via massive customer ticket counts or huge text dumps
-MAX_TICKETS_PER_SUMMARY = 20 
-MAX_FIELD_LENGTH = 500
+MAX_TICKETS_PER_SUMMARY = 50 
+MAX_FIELD_LENGTH = 1000
 
 # =============================================================================
 # Style Configuration Loader

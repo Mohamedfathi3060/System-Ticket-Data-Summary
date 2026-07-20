@@ -359,7 +359,7 @@ if st.session_state.df_clean is not None:
             # Generate summaries button
             is_generating = st.session_state.get("generating_summaries", False)
             
-            if st.button("🤖 Generate AI Summaries", type="primary", use_container_width=True, disabled=is_generating):
+            if st.button("🤖 Generate AI Summaries", type="primary", width="stretch", disabled=is_generating):
                 st.session_state.generating_summaries = True
                 st.rerun()
                 
@@ -433,7 +433,7 @@ if st.session_state.df_clean is not None:
                 available_cols = [c for c in display_cols if c in customer_tickets.columns]
                 st.dataframe(
                     customer_tickets[available_cols],
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
 
@@ -455,11 +455,11 @@ if st.session_state.df_clean is not None:
 
         with col1:
             fig_volume = plot_ticket_volume_over_time(df)
-            st.plotly_chart(fig_volume, use_container_width=True)
+            st.plotly_chart(fig_volume, width="stretch")
 
         with col2:
             fig_resolution = plot_avg_resolution_time(df)
-            st.plotly_chart(fig_resolution, use_container_width=True)
+            st.plotly_chart(fig_resolution, width="stretch")
 
         st.markdown('<hr class="styled-divider">', unsafe_allow_html=True)
 
@@ -468,11 +468,11 @@ if st.session_state.df_clean is not None:
 
         with col3:
             fig_issues = plot_common_issues(df)
-            st.plotly_chart(fig_issues, use_container_width=True)
+            st.plotly_chart(fig_issues, width="stretch")
 
         with col4:
             fig_recurring = plot_recurring_tickets(df)
-            st.plotly_chart(fig_recurring, use_container_width=True)
+            st.plotly_chart(fig_recurring, width="stretch")
 
         st.markdown('<hr class="styled-divider">', unsafe_allow_html=True)
 
@@ -481,12 +481,12 @@ if st.session_state.df_clean is not None:
 
         with col5:
             fig_status = plot_ticket_status_distribution(df)
-            st.plotly_chart(fig_status, use_container_width=True)
+            st.plotly_chart(fig_status, width="stretch")
 
         # AI Business Insights
         with col6:
             st.markdown("#### 🧠 AI-Generated Business Insights")
-            if st.button("Generate Insights", type="secondary", use_container_width=True):
+            if st.button("Generate Insights", type="secondary", width="stretch"):
                 with st.spinner("Analyzing trends with Gemini AI..."):
                     try:
                         # Build stats for the insights prompt
@@ -512,7 +512,7 @@ if st.session_state.df_clean is not None:
         # Data table
         st.markdown('<hr class="styled-divider">', unsafe_allow_html=True)
         with st.expander("📋 Full Cleaned Dataset", expanded=False):
-            st.dataframe(df, use_container_width=True, hide_index=True)
+            st.dataframe(df, width="stretch", hide_index=True)
 
 else:
     # No data loaded — show welcome screen
