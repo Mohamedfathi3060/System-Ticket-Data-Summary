@@ -11,10 +11,12 @@ Handles the full pipeline from ticket data to structured narrative summaries:
 import json
 import os
 import re
+import logging
 from typing import Dict, List, Optional
 
 import streamlit as st
 import google.generativeai as genai
+from langsmith import traceable
 import pandas as pd
 from dotenv import load_dotenv
 
@@ -30,6 +32,9 @@ from config import (
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Set up logging for background tracking
+logger = logging.getLogger(__name__)
 
 
 def _configure_gemini() -> None:
@@ -212,6 +217,7 @@ Now generate the JSON summary for customer {customer_number}'s {product} tickets
     return prompt
 
 
+@traceable(name="Generate Ticket Summary")
 def generate_summary(
     customer_number: str,
     product: str,
@@ -261,8 +267,12 @@ def generate_summary(
         response = model.generate_content(user_prompt)
 
         # Step 5: Parse the JSON response
-        response_text = response.text.strip()
-
+        try:
+            response_text = response.text.strip()
+        except ValueError as ve:
+            logger.error(f"Empty or blocked Gemini response. Candidates: {response.candidates}")
+            raise RuntimeError("The AI response was blocked or returned an empty payload.")
+            
         # Try direct JSON parse
         try:
             result = json.loads(response_text)
@@ -272,11 +282,14 @@ def generate_summary(
                 r"```(?:json)?\s*([\s\S]*?)\s*```", response_text
             )
             if json_match:
-                result = json.loads(json_match.group(1))
+                try:
+                    result = json.loads(json_match.group(1))
+                except json.JSONDecodeError:
+                    logger.error(f"Failed to parse JSON inside markdown block. Raw output:\n{response_text}")
+                    raise RuntimeError("The AI failed to generate a valid data structure.")
             else:
-                raise json.JSONDecodeError(
-                    "No valid JSON found in response", response_text, 0
-                )
+                logger.error(f"No valid JSON found in response. Raw output:\n{response_text}")
+                raise RuntimeError("The AI failed to generate a valid data structure.")
 
         return result
 
@@ -284,6 +297,7 @@ def generate_summary(
         raise RuntimeError(f"LLM summary generation failed: {str(e)}")
 
 
+@traceable(name="Generate Business Insights")
 def generate_insights(stats: Dict) -> str:
     """
     Generate business insights from aggregated ticket statistics using Gemini.
