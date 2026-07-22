@@ -6,16 +6,20 @@ Handles the full pipeline from ticket data to structured narrative summaries:
 2. Split tickets into 5 chronological phases.
 3. Construct a one-shot prompt with explicit multilingual handling.
 4. Call Gemini API and parse the structured JSON response.
+
+Uses the modern `google-genai` SDK (replaces deprecated `google-generativeai`).
 """
 
 import json
 import os
 import re
+import time
 import logging
 from typing import Dict, List, Optional
 
 import streamlit as st
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from langsmith import traceable
 import pandas as pd
 from dotenv import load_dotenv
@@ -45,21 +49,51 @@ except FileNotFoundError:
 # Set up logging for background tracking
 logger = logging.getLogger(__name__)
 
+# Module-level Gemini client (initialized once)
+_gemini_client: Optional[genai.Client] = None
 
-def _configure_gemini() -> None:
+# Timeout for Gemini API calls (in seconds)
+GEMINI_TIMEOUT_SECONDS = 120
+
+
+def _get_gemini_client() -> genai.Client:
     """
-    Configure the Gemini API with the API key from environment variables.
+    Get or create the Gemini API client (singleton pattern).
+
+    Uses the API key from environment variables or Streamlit secrets.
+    Configures HTTP timeouts to prevent indefinite hangs.
 
     Raises:
         ValueError: If GEMINI_API_KEY is not set.
+
+    Returns:
+        genai.Client: Configured Gemini client instance.
     """
+    global _gemini_client
+
+    if _gemini_client is not None:
+        logger.debug("Reusing existing Gemini client instance.")
+        return _gemini_client
+
     api_key = os.getenv("GEMINI_API_KEY") or st.secrets.get("GEMINI_API_KEY")
     if not api_key:
+        logger.error("GEMINI_API_KEY not found in environment or Streamlit secrets.")
         raise ValueError(
             "GEMINI_API_KEY environment variable is not set. "
             "Please add it to your .env file or set it in your environment."
         )
-    genai.configure(api_key=api_key)
+
+    logger.info("Initializing Gemini client (model=%s, timeout=%ds).", GEMINI_MODEL, GEMINI_TIMEOUT_SECONDS)
+
+    _gemini_client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            timeout=GEMINI_TIMEOUT_SECONDS * 1000,  # milliseconds
+        ),
+    )
+
+    logger.info("Gemini client initialized successfully.")
+    return _gemini_client
 
 
 def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
@@ -80,6 +114,7 @@ def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
     # Sort to ensure we take ONLY the most recent N tickets to heavily protect against token waste/abuse
     # if a user uploads a wildly huge fake volume of tickets for one customer.
     recent_tickets = tickets_df.tail(MAX_TICKETS_PER_SUMMARY)
+    logger.debug("Building ticket context: %d tickets (capped from %d).", len(recent_tickets), len(tickets_df))
 
     for _, row in recent_tickets.iterrows():
         context = {}
@@ -98,6 +133,7 @@ def build_ticket_context(tickets_df: pd.DataFrame) -> List[Dict]:
                 # Skip NaN/empty values to keep prompt minimal
         contexts.append(context)
 
+    logger.debug("Built %d ticket contexts.", len(contexts))
     return contexts
 
 
@@ -232,23 +268,47 @@ def _call_gemini_api(system_prompt: str, user_prompt: str) -> str:
     """
     Isolated wrapper around the Gemini API to explicitly log the exact 
     system instructions and user configurations into LangSmith.
+
+    Includes comprehensive timing and error logging.
     """
-    model = genai.GenerativeModel(
-        model_name=GEMINI_MODEL,
-        system_instruction=system_prompt,
-        generation_config=genai.types.GenerationConfig(
-            temperature=GEMINI_TEMPERATURE,
-            max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
-            response_mime_type="application/json",
-        ),
+    client = _get_gemini_client()
+
+    logger.info(
+        "Sending Gemini API request: model=%s, temperature=%s, max_output_tokens=%d, prompt_length=%d chars",
+        GEMINI_MODEL, GEMINI_TEMPERATURE, GEMINI_MAX_OUTPUT_TOKENS, len(user_prompt),
     )
-    
-    response = model.generate_content(user_prompt)
+
+    start_time = time.monotonic()
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=GEMINI_TEMPERATURE,
+                max_output_tokens=GEMINI_MAX_OUTPUT_TOKENS,
+                response_mime_type="application/json",
+            ),
+        )
+    except Exception as e:
+        elapsed = time.monotonic() - start_time
+        logger.error("Gemini API call FAILED after %.2fs: %s: %s", elapsed, type(e).__name__, e)
+        raise
+
+    elapsed = time.monotonic() - start_time
     
     try:
-        return response.text.strip()
+        response_text = response.text.strip()
+        logger.info(
+            "Gemini API call SUCCEEDED in %.2fs — response_length=%d chars",
+            elapsed, len(response_text),
+        )
+        return response_text
     except ValueError:
-        logger.error(f"Empty or blocked Gemini response. Candidates: {response.candidates}")
+        logger.error(
+            "Gemini returned empty/blocked response after %.2fs. Candidates: %s",
+            elapsed, response.candidates,
+        )
         raise RuntimeError("The AI response was blocked or returned an empty payload.")
 
 
@@ -279,24 +339,37 @@ def generate_summary(
     Raises:
         ValueError: If Gemini API key is not configured.
     """
-    _configure_gemini()
+    overall_start = time.monotonic()
+    logger.info("=== Starting summary generation: customer=%s, product=%s, tickets=%d ===",
+                customer_number, product, len(tickets_df))
 
     try:
         # Step 1: Build robust context list
+        step_start = time.monotonic()
         contexts = build_ticket_context(tickets_df)
+        logger.info("Step 1 — Context building: %.2fs (%d contexts)", time.monotonic() - step_start, len(contexts))
         if not contexts:
+            logger.warning("No ticket contexts built — returning None.")
             return None
 
         # Step 2: Build prompts
+        step_start = time.monotonic()
         system_prompt = _build_system_prompt()
         user_prompt = _build_user_prompt(customer_number, product, contexts)
+        logger.info("Step 2 — Prompt building: %.2fs (system=%d chars, user=%d chars)",
+                     time.monotonic() - step_start, len(system_prompt), len(user_prompt))
 
         # Step 3 & 4: Call LLM explicitly via traceable runner
+        step_start = time.monotonic()
         response_text = _call_gemini_api(system_prompt, user_prompt)
+        api_elapsed = time.monotonic() - step_start
+        logger.info("Step 3 — Gemini API call: %.2fs", api_elapsed)
         
         # Step 5: Parse the JSON response
+        step_start = time.monotonic()
         try:
             result = json.loads(response_text)
+            logger.info("Step 4 — JSON parsing: success (direct parse)")
         except json.JSONDecodeError:
             # Try extracting JSON from markdown code block
             json_match = re.search(
@@ -305,16 +378,24 @@ def generate_summary(
             if json_match:
                 try:
                     result = json.loads(json_match.group(1))
+                    logger.info("Step 4 — JSON parsing: success (extracted from markdown block)")
                 except json.JSONDecodeError:
-                    logger.error(f"Failed to parse JSON inside markdown block. Raw output:\n{response_text}")
+                    logger.error("Failed to parse JSON inside markdown block. Raw output:\n%s", response_text)
                     raise RuntimeError("The AI failed to generate a valid data structure.")
             else:
-                logger.error(f"No valid JSON found in response. Raw output:\n{response_text}")
+                logger.error("No valid JSON found in response. Raw output:\n%s", response_text)
                 raise RuntimeError("The AI failed to generate a valid data structure.")
+        logger.info("Step 4 — JSON parsing: %.2fs", time.monotonic() - step_start)
 
+        total_elapsed = time.monotonic() - overall_start
+        logger.info("=== Summary generation COMPLETE: customer=%s, product=%s, total=%.2fs ===",
+                     customer_number, product, total_elapsed)
         return result
 
     except Exception as e:
+        total_elapsed = time.monotonic() - overall_start
+        logger.error("=== Summary generation FAILED after %.2fs: %s: %s ===",
+                      total_elapsed, type(e).__name__, e)
         raise RuntimeError(f"LLM summary generation failed: {str(e)}")
 
 
@@ -334,7 +415,7 @@ def generate_insights(stats: Dict) -> str:
     Returns:
         str: 2-3 actionable business insights as formatted text.
     """
-    _configure_gemini()
+    client = _get_gemini_client()
 
     prompt = f"""Based on the following ticket statistics, generate 2-3 concise, actionable business insights. Focus on patterns that could improve customer service and operational efficiency.
 
@@ -352,17 +433,24 @@ Format each insight as:
 
 Return ONLY the formatted insights text, no JSON wrapper."""
 
+    logger.info("Generating business insights: total_tickets=%s", stats.get('total_tickets', 'N/A'))
+    start_time = time.monotonic()
+
     try:
-        model = genai.GenerativeModel(
-            model_name=GEMINI_MODEL,
-            generation_config=genai.GenerationConfig(
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+            config=types.GenerateContentConfig(
                 temperature=0.5,
                 max_output_tokens=1024,
             ),
         )
-
-        response = model.generate_content(prompt)
-        return response.text.strip()
+        elapsed = time.monotonic() - start_time
+        result = response.text.strip()
+        logger.info("Business insights generated in %.2fs (%d chars).", elapsed, len(result))
+        return result
 
     except Exception as e:
+        elapsed = time.monotonic() - start_time
+        logger.error("Business insights FAILED after %.2fs: %s: %s", elapsed, type(e).__name__, e)
         return f"⚠️ Could not generate insights: {str(e)}"

@@ -12,6 +12,21 @@ Run with: streamlit run app.py
 import streamlit as st
 import pandas as pd
 import json
+import logging
+
+# =============================================================================
+# Logging Configuration — output to both console and app.log
+# =============================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    handlers=[
+        logging.FileHandler("app.log", encoding="utf-8"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
 
 from config import load_style_config, SUMMARY_PHASES, VALID_CATEGORIES, CATEGORY_TO_PRODUCT
 from preprocessing import (

@@ -101,7 +101,7 @@ SUMMARY_PHASES = [
 # =============================================================================
 # Gemini LLM Configuration & Token Protections
 # =============================================================================
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_TEMPERATURE = 0.4
 GEMINI_MAX_OUTPUT_TOKENS = 4096
 
